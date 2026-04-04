@@ -118,6 +118,65 @@ def nifti_to_pt_input(path: str) -> torch.Tensor:
     return x
 
 
+# --- ResNet18 / Custom CNN slot (matches Collab 2D CNN notebook) ---
+_IMAGENET_MEAN = (0.485, 0.456, 0.406)
+_IMAGENET_STD = (0.229, 0.224, 0.225)
+
+
+def _norm01_2d(sl: np.ndarray) -> np.ndarray:
+    smin = float(sl.min())
+    smax = float(sl.max())
+    if smax > smin:
+        return (sl - smin) / (smax - smin)
+    return np.zeros_like(sl, dtype=np.float32)
+
+
+def _resize_slice_hw(sl: np.ndarray, size: int = 128) -> np.ndarray:
+    t = tf.constant(sl[..., np.newaxis], dtype=tf.float32)
+    t = tf.image.resize(t, [size, size])
+    return t.numpy()[..., 0].astype(np.float32)
+
+
+def _volume_to_25d_chw(vol: np.ndarray, offset: int = 5) -> np.ndarray:
+    """Three axial slices as RGB-like channels, 128×128 (2.5D per training notebook)."""
+    vol = np.asarray(vol, dtype=np.float32)
+    if vol.ndim == 4:
+        vol = vol[..., 0]
+    if vol.ndim == 2:
+        sl = _norm01_2d(vol)
+        sl = _resize_slice_hw(sl)
+        return np.stack([sl, sl, sl], axis=0)
+    if vol.ndim != 3:
+        raise ValueError(f"Expected 2D or 3D volume, got shape {vol.shape}")
+    d = vol.shape[2]
+    if d < 3:
+        sl = _norm01_2d(vol[:, :, 0])
+        sl = _resize_slice_hw(sl)
+        return np.stack([sl, sl, sl], axis=0)
+    mid = d // 2
+    off = min(offset, max(1, (d - 1) // 2 - 1))
+    mid = max(off, min(mid, d - off - 1))
+    slices = [
+        _norm01_2d(vol[:, :, mid - off]),
+        _norm01_2d(vol[:, :, mid]),
+        _norm01_2d(vol[:, :, mid + off]),
+    ]
+    resized = [_resize_slice_hw(s) for s in slices]
+    return np.stack(resized, axis=0).astype(np.float32)
+
+
+def nifti_to_resnet_pt_input(path: str) -> torch.Tensor:
+    """ResNet18 path: 2.5D slices + ImageNet normalization, shape (1, 3, 128, 128)."""
+    vol = _load_volume_array_from_scan(path)
+    chw = _volume_to_25d_chw(vol)
+    t = torch.from_numpy(chw).float()
+    t = torch.clamp(t, 0.0, 1.0)
+    mean = torch.tensor(_IMAGENET_MEAN, dtype=t.dtype).view(3, 1, 1)
+    std = torch.tensor(_IMAGENET_STD, dtype=t.dtype).view(3, 1, 1)
+    t = (t - mean) / std
+    return t.unsqueeze(0)
+
+
 def _confidence_from_binary_probs(p_ad: float) -> dict[str, float]:
     p_ad = float(np.clip(p_ad, 0.0, 1.0))
     p_cn = 1.0 - p_ad
@@ -208,6 +267,51 @@ def _try_load_torch(path: str, label: str) -> nn.Module | None:
         return None
 
 
+def _try_load_pt_classifier(path: str, label: str) -> nn.Module | None:
+    """Load PyTorch Custom CNN slot: full nn.Module or ResNet18 ``state_dict`` (``.pth``)."""
+    if not os.path.isfile(path):
+        logger.warning(
+            "WARNING: [%s] model not found at %s — will be skipped during inference.",
+            label,
+            path,
+        )
+        return None
+    try:
+        obj = torch.load(path, map_location="cpu", weights_only=False)
+        if isinstance(obj, nn.Module):
+            obj.eval()
+            logger.info("Loaded %s as torch.nn.Module from %s", label, path)
+            return obj
+        if isinstance(obj, dict) and "fc.weight" in obj and "conv1.weight" in obj:
+            from torchvision.models import resnet18
+
+            n_classes = int(obj["fc.weight"].shape[0])
+            model = resnet18(weights=None)
+            model.fc = nn.Linear(model.fc.in_features, n_classes)
+            model.load_state_dict(obj, strict=True)
+            model.eval()
+            logger.info(
+                "Loaded %s as ResNet18 (%d classes) from state_dict %s",
+                label,
+                n_classes,
+                path,
+            )
+            return model
+    except Exception as e:
+        logger.warning(
+            "WARNING: [%s] failed to load from %s — %s",
+            label,
+            path,
+            e,
+        )
+    return None
+
+
+def _is_resnet18_classifier(m: nn.Module) -> bool:
+    fc = getattr(m, "fc", None)
+    return isinstance(fc, nn.Linear) and hasattr(m, "conv1")
+
+
 def _try_load_sklearn(path: str, label: str) -> Any | None:
     if not os.path.isfile(path):
         logger.warning(
@@ -256,11 +360,11 @@ def load_all_models() -> None:
         "TF multiclass",
     )
 
-    pt_binary_model = _try_load_torch(
+    pt_binary_model = _try_load_pt_classifier(
         resolve_model_path("PT_BINARY_MODEL_PATH", "models/pt/task2_binary_model.pth"),
         "PT binary",
     )
-    pt_multi_model = _try_load_torch(
+    pt_multi_model = _try_load_pt_classifier(
         resolve_model_path("PT_MULTI_MODEL_PATH", "models/pt/task2_multi_model.pth"),
         "PT multiclass",
     )
@@ -341,12 +445,28 @@ def _hybrid_features(slice_hwc: np.ndarray, extractor: Any) -> np.ndarray:
 
 
 def _torch_logits_to_binary_result(logits: torch.Tensor) -> dict[str, Any]:
-    if logits.dim() == 2 and logits.shape[1] == 1:
-        p = torch.sigmoid(logits[0, 0]).item()
+    v = logits[0] if logits.dim() == 2 else logits.flatten()
+    if v.numel() == 2:
+        # CrossEntropy with two classes (e.g. ResNet): index 1 = AD in training notebook
+        p = torch.softmax(v, dim=0).detach().cpu().numpy()
+        p_ad = float(p[1])
+    elif v.numel() == 1:
+        p_ad = torch.sigmoid(v).item()
     else:
-        p = torch.sigmoid(logits.flatten()[0]).item()
-    pred = "AD" if p >= 0.5 else "CN"
-    return {"prediction": pred, "confidence": _confidence_from_binary_probs(p)}
+        p_ad = torch.sigmoid(v.flatten()[0]).item()
+    pred = "AD" if p_ad >= 0.5 else "CN"
+    return {"prediction": pred, "confidence": _confidence_from_binary_probs(p_ad)}
+
+
+def _pt_resnet_multiclass_logits_to_result(logits: torch.Tensor) -> dict[str, Any]:
+    """Training used class order CN=0, MCI=1, AD=2; API uses AD, MCI, CN indices."""
+    v = logits[0] if logits.dim() == 2 else logits.flatten()
+    if v.numel() != 3:
+        raise ValueError(f"Expected 3-class logits, got shape {tuple(logits.shape)}")
+    p_cma = torch.softmax(v, dim=0).detach().cpu().numpy()
+    probs = np.array([p_cma[2], p_cma[1], p_cma[0]], dtype=np.float64)
+    pred = _prediction_from_multiclass_probs(probs)
+    return {"prediction": pred, "confidence": _confidence_from_multiclass_probs(probs)}
 
 
 def _torch_logits_to_multiclass_result(logits: torch.Tensor) -> dict[str, Any]:
@@ -410,7 +530,11 @@ def run_tensorflow_multiclass_strict(path: str) -> dict[str, Any]:
 def run_pytorch_binary(path: str) -> dict[str, Any]:
     if pt_binary_model is None:
         raise RuntimeError("PT binary unavailable")
-    x = nifti_to_pt_input(path)
+    x = (
+        nifti_to_resnet_pt_input(path)
+        if _is_resnet18_classifier(pt_binary_model)
+        else nifti_to_pt_input(path)
+    )
     with torch.no_grad():
         logits = pt_binary_model(x)
     return _torch_logits_to_binary_result(logits)
@@ -419,18 +543,30 @@ def run_pytorch_binary(path: str) -> dict[str, Any]:
 def run_pytorch_multiclass(path: str) -> dict[str, Any]:
     if pt_multi_model is None:
         return sync_multiclass_mock()
-    x = nifti_to_pt_input(path)
+    x = (
+        nifti_to_resnet_pt_input(path)
+        if _is_resnet18_classifier(pt_multi_model)
+        else nifti_to_pt_input(path)
+    )
     with torch.no_grad():
         logits = pt_multi_model(x)
+    if _is_resnet18_classifier(pt_multi_model):
+        return _pt_resnet_multiclass_logits_to_result(logits)
     return _torch_logits_to_multiclass_result(logits)
 
 
 def run_pytorch_multiclass_strict(path: str) -> dict[str, Any]:
     if pt_multi_model is None:
         raise RuntimeError("PyTorch multiclass model not loaded")
-    x = nifti_to_pt_input(path)
+    x = (
+        nifti_to_resnet_pt_input(path)
+        if _is_resnet18_classifier(pt_multi_model)
+        else nifti_to_pt_input(path)
+    )
     with torch.no_grad():
         logits = pt_multi_model(x)
+    if _is_resnet18_classifier(pt_multi_model):
+        return _pt_resnet_multiclass_logits_to_result(logits)
     return _torch_logits_to_multiclass_result(logits)
 
 
