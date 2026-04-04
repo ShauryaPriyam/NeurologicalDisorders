@@ -2,3 +2,11 @@ fastapi
 uvicorn
 python-multipart
 python-dotenv
+tensorflow>=2.15
+torch
+torchvision
+scikit-learn
+nibabel
+joblib
+numpy
+scipy

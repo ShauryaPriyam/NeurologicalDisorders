@@ -1,59 +1,98 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import Image from "next/image";
+import { useRef, useState } from "react";
+
+import { BinaryScreeningResult } from "./components/BinaryScreeningResult";
+import { MultiClassScreeningResult } from "./components/MultiClassScreeningResult";
 
 const PRIMARY = "#185FA5";
 
-function getPredictUrl(): string {
-  const base = (
-    process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
-  ).replace(/\/+$/, "");
-  return `${base}/predict`;
+function getAnalyzeUrl(): string {
+  return "/api/analyze";
 }
 
-const RESULTS = {
-  AD: {
-    key: "AD" as const,
-    label: "Alzheimer's Disease (AD)",
-    shortLabel: "AD",
-    predicted: "Predicted class",
-    bg: "#FCEBEB",
-    text: "#791F1F",
-    bar: "#E24B4A",
-    dot: "#E24B4A",
-    metrics: { AD: 80, MCI: 8, CN: 12 },
-    alert:
-      "High-probability neurodegeneration detected. Referral for comprehensive clinical and cognitive evaluation is strongly recommended.",
-  },
-  MCI: {
-    key: "MCI" as const,
-    label: "Mild Cognitive Impairment (MCI)",
-    shortLabel: "MCI",
-    predicted: "Predicted class",
-    bg: "#FAEEDA",
-    text: "#633806",
-    bar: "#EF9F27",
-    dot: "#EF9F27",
-    metrics: { AD: 22, MCI: 65, CN: 13 },
-    alert:
-      "Mild cognitive decline indicated. Longitudinal monitoring and neuropsychological assessment are advised.",
-  },
-  CN: {
-    key: "CN" as const,
-    label: "Cognitively Normal (CN)",
-    shortLabel: "CN",
-    predicted: "Predicted class",
-    bg: "#EAF3DE",
-    text: "#27500A",
-    bar: "#639922",
-    dot: "#639922",
-    metrics: { AD: 4, MCI: 9, CN: 87 },
-    alert:
-      "No significant neurodegeneration detected. Routine follow-up as clinically appropriate.",
-  },
+type AveragedBinary = {
+  result: "ad" | "cn";
+  confidence: { ad: number; cn: number };
+} | null;
+
+type AveragedMulticlass = {
+  result: "ad" | "mci" | "cn";
+  confidence: { ad: number; mci: number; cn: number };
+} | null;
+
+type ModelSlotData = {
+  binary: AveragedBinary;
+  multiclass: AveragedMulticlass;
 };
 
-type ResultKey = keyof typeof RESULTS;
+type ModelSelectionKey =
+  | "averaged"
+  | "3d_pca_svm"
+  | "2d_cnn_model"
+  | "custom_cnn";
+
+type AnalyzeResponse = {
+  averaged: ModelSlotData;
+  "3d_pca_svm": ModelSlotData;
+  "2d_cnn_model": ModelSlotData;
+  "custom_cnn": ModelSlotData;
+  modelErrors?: string[];
+  filename?: string;
+};
+
+const MODEL_OPTIONS: { value: ModelSelectionKey; label: string }[] = [
+  { value: "averaged", label: "Averaged (All Models)" },
+  { value: "3d_pca_svm", label: "3D PCA SVM" },
+  { value: "2d_cnn_model", label: "2D CNN Model" },
+  { value: "custom_cnn", label: "Custom CNN" },
+];
+
+const MODEL_SUBLABELS: Record<ModelSelectionKey, string> = {
+  averaged: "Ensemble of all 3 models",
+  "3d_pca_svm": "SVM with 3D PCA features",
+  "2d_cnn_model": "2D Convolutional Neural Network",
+  custom_cnn: "Custom CNN architecture",
+};
+
+const MODEL_RESULT_LABELS: Record<ModelSelectionKey, string> = {
+  averaged: "Averaged (all models)",
+  "3d_pca_svm": "3D PCA SVM",
+  "2d_cnn_model": "2D CNN Model",
+  custom_cnn: "Custom CNN",
+};
+
+function getModelSlot(
+  payload: AnalyzeResponse,
+  key: ModelSelectionKey,
+): ModelSlotData {
+  if (key === "averaged") return payload.averaged;
+  return payload[key];
+}
+
+function scanFileKindLabel(name: string): string {
+  const n = name.toLowerCase();
+  if (n.endsWith(".npy")) return "NPY";
+  if (n.endsWith(".nii.gz")) return "NII.GZ";
+  if (n.endsWith(".nii")) return "NII";
+  return "SCAN";
+}
+
+function SectionDivider({ label }: { label: string }) {
+  return (
+    <div
+      className="my-5 flex min-h-[1rem] items-center gap-3"
+      role="separator"
+    >
+      <div className="h-[0.5px] min-w-0 flex-1 bg-slate-200" />
+      <span className="shrink-0 text-[12px] font-medium uppercase tracking-wide text-slate-400">
+        {label}
+      </span>
+      <div className="h-[0.5px] min-w-0 flex-1 bg-slate-200" />
+    </div>
+  );
+}
 
 function UploadIcon({ className }: { className?: string }) {
   return (
@@ -77,28 +116,28 @@ function UploadIcon({ className }: { className?: string }) {
   );
 }
 
-function BrainIllustration({ className }: { className?: string }) {
+function CheckCircleIcon({ className }: { className?: string }) {
   return (
     <svg
       className={className}
       xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 120 120"
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
       fill="none"
       aria-hidden
     >
       <path
-        d="M60 12c-8 0-15 4-19 10-4-2-9-3-14-3-12 0-22 10-22 22 0 5 2 10 5 14-3 5-5 11-5 17 0 16 13 29 29 29h4c5 8 14 13 24 13s19-5 24-13h4c16 0 29-13 29-29 0-6-2-12-5-17 3-4 5-9 5-14 0-12-10-22-22-22-5 0-10 1-14 3-4-6-11-10-19-10Z"
+        d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10Z"
         stroke="currentColor"
-        strokeWidth="2"
-        strokeLinejoin="round"
-        opacity="0.35"
+        strokeWidth="1.5"
       />
       <path
-        d="M45 52c0-6 5-11 11-11s11 5 11 11M64 52c0-6 5-11 11-11"
+        d="m8.5 12.5 2.5 2.5 5-5"
         stroke="currentColor"
         strokeWidth="1.5"
         strokeLinecap="round"
-        opacity="0.35"
+        strokeLinejoin="round"
       />
     </svg>
   );
@@ -154,6 +193,9 @@ function ChevronIcon({ open }: { open: boolean }) {
   );
 }
 
+const SECTION_LABEL =
+  "text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400";
+
 export default function Home() {
   const scanInputRef = useRef<HTMLInputElement>(null);
   const [scanFile, setScanFile] = useState<File | null>(null);
@@ -165,28 +207,14 @@ export default function Home() {
   );
   const [loading, setLoading] = useState(false);
   const [analysisDone, setAnalysisDone] = useState(false);
-  const [activeTab, setActiveTab] = useState<ResultKey>("AD");
-  const [barProgress, setBarProgress] = useState({ AD: 0, MCI: 0, CN: 0 });
-  const [apiMetrics, setApiMetrics] = useState<{
-    AD: number;
-    MCI: number;
-    CN: number;
-  } | null>(null);
+  const [analysisPayload, setAnalysisPayload] = useState<AnalyzeResponse | null>(
+    null,
+  );
+  const [selectedModel, setSelectedModel] =
+    useState<ModelSelectionKey>("averaged");
 
-  const current = RESULTS[activeTab];
-
-  useEffect(() => {
-    if (!analysisDone) {
-      setBarProgress({ AD: 0, MCI: 0, CN: 0 });
-      return;
-    }
-    const m = apiMetrics || RESULTS[activeTab].metrics;
-    setBarProgress({ AD: 0, MCI: 0, CN: 0 });
-    const t = window.setTimeout(() => {
-      setBarProgress({ AD: m.AD, MCI: m.MCI, CN: m.CN });
-    }, 50);
-    return () => window.clearTimeout(t);
-  }, [analysisDone, activeTab, apiMetrics]);
+  const showRunPulse =
+    Boolean(scanFile) && !analysisDone && !loading;
 
   function handlePickScan() {
     scanInputRef.current?.click();
@@ -208,22 +236,17 @@ export default function Home() {
   async function runAnalysis() {
     if (!scanFile || loading) return;
     setAnalysisDone(false);
-    setApiMetrics(null);
+    setAnalysisPayload(null);
     try {
       setLoading(true);
       const formData = new FormData();
       formData.append("file", scanFile);
-      formData.append("model_type", screeningType);
-      const response = await fetch(getPredictUrl(), {
+      const response = await fetch(getAnalyzeUrl(), {
         method: "POST",
         body: formData,
       });
-      const data = (await response.json()) as {
-        prediction: ResultKey;
-        confidence: { AD: number; MCI: number; CN: number };
+      const data = (await response.json()) as AnalyzeResponse & {
         detail?: unknown;
-        filename?: string;
-        model_used?: string;
       };
       if (!response.ok) {
         const detail = data.detail;
@@ -233,8 +256,8 @@ export default function Home() {
             : `Request failed (${response.status})`;
         throw new Error(msg);
       }
-      setActiveTab(data.prediction);
-      setApiMetrics(data.confidence);
+      setAnalysisPayload(data as AnalyzeResponse);
+      setSelectedModel("averaged");
       setAnalysisDone(true);
     } catch (err) {
       console.error(err);
@@ -244,145 +267,164 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
+    <div className="min-h-screen bg-slate-50 text-slate-800">
       <input
         ref={scanInputRef}
         type="file"
-        accept=".nii,.nii.gz"
+        accept=".nii,.nii.gz,.npy"
         className="hidden"
         onChange={handleScanFileChange}
       />
 
-      <header className="sticky top-0 z-10 border-b border-slate-200/80 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
-          <div className="flex items-center gap-2.5">
-            <div
-              className="flex h-9 w-9 items-center justify-center rounded-lg text-[11px] font-bold text-white shadow-sm"
-              style={{ backgroundColor: PRIMARY }}
-              aria-hidden
-            >
-              AI
-            </div>
-            <span className="text-lg font-semibold tracking-tight text-slate-900">
+      <header className="sticky top-0 z-50 border-b border-slate-200 bg-white">
+        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-3 px-4 sm:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <Image
+              src="/brain-placeholder.png"
+              alt=""
+              width={32}
+              height={32}
+              className="h-8 w-auto shrink-0 object-contain"
+              priority
+            />
+            <span className="truncate text-base font-semibold tracking-tight text-slate-900">
               CerebroAI
             </span>
           </div>
-          <div
-            className="flex h-9 w-9 items-center justify-center rounded-full text-sm font-semibold text-white"
-            style={{ backgroundColor: PRIMARY }}
-            title="User"
-          >
-            JD
+          <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+            <span className="hidden text-right text-[11px] leading-snug text-slate-400 lg:inline lg:max-w-[200px] xl:max-w-none">
+              Clinical Decision Support Tool
+            </span>
+            <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400 lg:hidden">
+              CDS
+            </span>
+            <div
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-100 text-xs font-semibold text-slate-700"
+              title="User"
+            >
+              JD
+            </div>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:py-8">
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-8">
+      <main className="mx-auto max-w-6xl min-w-0 overflow-x-hidden px-4 py-6 sm:px-6 lg:py-8">
+        <div className="grid min-w-0 grid-cols-1 gap-5 lg:grid-cols-2 lg:gap-6">
           {/* Left: Input */}
-          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
-              Input &amp; Controls
-            </h2>
+          <section className="min-w-0 rounded-xl border border-slate-200 bg-white p-6">
+            <h2 className={`mb-5 ${SECTION_LABEL}`}>Input &amp; Controls</h2>
 
-            <button
-              type="button"
-              onClick={handlePickScan}
-              className="group w-full rounded-xl border-2 border-dashed border-slate-300 bg-slate-50/50 px-4 py-10 text-center transition-colors hover:border-[#185FA5]/50 hover:bg-slate-50"
-            >
-              <UploadIcon className="mx-auto mb-3 text-[#185FA5] opacity-90" />
-              <p className="text-sm font-medium text-slate-800">
-                Drag &amp; Drop MRI scan or Click to Browse
-              </p>
-              <p className="mt-1 text-xs text-slate-500">
-                Accepts .nii and .nii.gz formats (T1-weighted)
-              </p>
-            </button>
-
-            {scanFileName && (
-              <div className="mt-3 flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-sm text-slate-800 shadow-sm">
-                <span className="truncate font-medium">{scanFileName}</span>
-                <span
-                  className="ml-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white"
-                  style={{ backgroundColor: PRIMARY }}
-                >
-                  NII.GZ
-                </span>
-              </div>
-            )}
-
-            <div className="mt-5 border-t border-slate-100 pt-5">
+            <div className="space-y-5">
               <button
                 type="button"
-                onClick={() => setMetadataOpen((o) => !o)}
-                className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-slate-50/80 px-4 py-3 text-left text-sm font-medium text-slate-800 transition-colors hover:bg-slate-50"
+                onClick={handlePickScan}
+                className="group w-full rounded-lg border-[1.5px] border-dashed border-slate-300 bg-slate-50/80 px-4 py-10 text-center transition-colors hover:border-slate-400 hover:bg-slate-50"
               >
-                <span>Optional subject metadata</span>
-                <ChevronIcon open={metadataOpen} />
-              </button>
-              {metadataOpen && (
-                <button
-                  type="button"
-                  onClick={handlePickCsv}
-                  className="mt-3 w-full rounded-xl border-2 border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-600 transition-colors hover:border-[#185FA5]/40"
-                >
-                  Drop CSV here or click to browse
-                </button>
-              )}
-              {metadataOpen && csvFileName && (
-                <p className="mt-2 text-xs text-slate-600">
-                  Selected:{" "}
-                  <span className="font-medium text-slate-800">{csvFileName}</span>
+                <UploadIcon className="mx-auto mb-3 text-[#185FA5] opacity-90" />
+                <p className="text-sm font-medium text-slate-800">
+                  Drag &amp; Drop MRI scan or Click to Browse
                 </p>
-              )}
-            </div>
+                <p className="mt-1 text-xs text-slate-500">
+                  Accepts .nii, .nii.gz, and .npy (T1-weighted)
+                </p>
+              </button>
 
-            <div className="mt-6">
-              <p className="mb-2 text-xs font-medium text-slate-500">
-                Screening type
-              </p>
-              <div className="flex flex-col gap-2 sm:flex-row sm:rounded-full sm:bg-slate-100 sm:p-1">
+              {scanFileName ? (
+                <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-left text-sm text-slate-800">
+                  <CheckCircleIcon
+                    className="shrink-0 text-emerald-600"
+                    aria-hidden
+                  />
+                  <span className="min-w-0 flex-1 truncate font-medium">
+                    {scanFileName}
+                  </span>
+                  <span
+                    className="shrink-0 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-600"
+                  >
+                    {scanFileKindLabel(scanFileName)}
+                  </span>
+                </div>
+              ) : null}
+
+              <SectionDivider label="Optional" />
+
+              <div className="space-y-3">
                 <button
                   type="button"
-                  onClick={() => setScreeningType("binary")}
-                  className={`rounded-full px-4 py-2.5 text-center text-xs font-medium leading-snug transition-colors sm:flex-1 ${
-                    screeningType === "binary"
-                      ? "text-white shadow-sm"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
-                  style={
-                    screeningType === "binary"
-                      ? { backgroundColor: PRIMARY }
-                      : undefined
-                  }
+                  onClick={() => setMetadataOpen((o) => !o)}
+                  className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm font-medium text-slate-800 transition-colors hover:bg-slate-100"
                 >
-                  Binary Classification (Normal vs. Alzheimer&apos;s)
+                  <span>Optional subject metadata</span>
+                  <ChevronIcon open={metadataOpen} />
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setScreeningType("multiclass")}
-                  className={`rounded-full px-4 py-2.5 text-center text-xs font-medium leading-snug transition-colors sm:flex-1 ${
-                    screeningType === "multiclass"
-                      ? "text-white shadow-sm"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
-                  style={
-                    screeningType === "multiclass"
-                      ? { backgroundColor: PRIMARY }
-                      : undefined
-                  }
-                >
-                  Multi-Class Assessment (Includes Mild Cognitive Impairment)
-                </button>
+                {metadataOpen ? (
+                  <button
+                    type="button"
+                    onClick={handlePickCsv}
+                    className="w-full rounded-lg border-[1.5px] border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-600 transition-colors hover:border-slate-400"
+                  >
+                    Drop CSV here or click to browse
+                  </button>
+                ) : null}
+                {metadataOpen && csvFileName ? (
+                  <p className="text-xs text-slate-500">
+                    Selected:{" "}
+                    <span className="font-medium text-slate-700">
+                      {csvFileName}
+                    </span>
+                  </p>
+                ) : null}
               </div>
-            </div>
 
-            <div className="mt-8">
+              <SectionDivider label="Screening" />
+
+              <div className="space-y-3">
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                  Screening type
+                </p>
+                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:rounded-lg sm:bg-slate-100 sm:p-1">
+                  <button
+                    type="button"
+                    onClick={() => setScreeningType("binary")}
+                    className={`rounded-lg px-4 py-2.5 text-center text-xs font-medium leading-snug transition-colors sm:min-w-0 sm:flex-1 ${
+                      screeningType === "binary"
+                        ? "text-white"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                    style={
+                      screeningType === "binary"
+                        ? { backgroundColor: PRIMARY }
+                        : undefined
+                    }
+                  >
+                    Binary Classification (Normal vs. Alzheimer&apos;s)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setScreeningType("multiclass")}
+                    className={`rounded-lg px-4 py-2.5 text-center text-xs font-medium leading-snug transition-colors sm:min-w-0 sm:flex-1 ${
+                      screeningType === "multiclass"
+                        ? "text-white"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                    style={
+                      screeningType === "multiclass"
+                        ? { backgroundColor: PRIMARY }
+                        : undefined
+                    }
+                  >
+                    Multi-Class (includes MCI)
+                  </button>
+                </div>
+              </div>
+
               <button
                 type="button"
                 disabled={!scanFile || loading}
                 onClick={() => void runAnalysis()}
-                className="flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3.5 text-sm font-semibold text-white shadow-md transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
+                className={`flex w-full items-center justify-center gap-2 rounded-lg px-4 py-3.5 text-sm font-semibold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50 ${
+                  showRunPulse ? "animate-run-attention" : ""
+                }`}
                 style={{ backgroundColor: PRIMARY }}
               >
                 {loading ? (
@@ -421,119 +463,91 @@ export default function Home() {
           </section>
 
           {/* Right: Results */}
-          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
-              Screening Results
-            </h2>
+          <section className="min-w-0 rounded-xl border border-slate-200 bg-white p-6">
+            <div className="mb-5 flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between lg:mb-6">
+              <h2 className={`shrink-0 ${SECTION_LABEL}`}>Screening Results</h2>
+              {analysisDone && analysisPayload && !loading ? (
+                <div className="flex w-full min-w-0 max-w-full flex-col sm:max-w-[min(100%,280px)] sm:items-end">
+                  <label className="sr-only" htmlFor="model-select">
+                    Result source model
+                  </label>
+                  <div className="w-full min-w-0 max-w-full sm:max-w-none">
+                    <select
+                      id="model-select"
+                      value={selectedModel}
+                      onChange={(e) =>
+                        setSelectedModel(e.target.value as ModelSelectionKey)
+                      }
+                      className="box-border w-full max-w-full min-w-0 cursor-pointer rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-[11px] font-medium text-slate-700 outline-none ring-slate-300 transition-colors hover:border-slate-300 hover:bg-slate-100 focus:border-[#185FA5]/50 focus:ring-2 focus:ring-[#185FA5]/20 sm:px-2.5 sm:text-right sm:text-[12px]"
+                    >
+                      {MODEL_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <p className="mt-2 break-words text-left text-[11px] leading-snug text-slate-500 sm:text-right">
+                    {MODEL_SUBLABELS[selectedModel]}
+                  </p>
+                </div>
+              ) : null}
+            </div>
 
             {!analysisDone ? (
-              <div className="flex min-h-[420px] flex-col items-center justify-center px-4 py-12 text-center">
-                <BrainIllustration className="mb-4 h-28 w-28 text-slate-400 opacity-40" />
+              <div className="flex min-h-[420px] flex-col items-center justify-center overflow-hidden px-2 py-12 text-center">
+                <Image
+                  src="/brain-placeholder.png"
+                  alt=""
+                  width={120}
+                  height={120}
+                  className="mb-5 h-[120px] w-[120px] object-contain opacity-25 grayscale"
+                />
                 <p className="text-base font-medium text-slate-600">
                   Upload a scan to view results
                 </p>
-                <p className="mt-1 max-w-xs text-sm text-slate-500">
+                <p className="mt-2 max-w-xs text-sm text-slate-500">
                   AI screening results will appear here
                 </p>
               </div>
-            ) : (
-              <div className="space-y-6">
-                <div className="flex flex-wrap gap-1 rounded-lg bg-slate-100 p-1">
-                  {(["AD", "MCI", "CN"] as const).map((tab) => (
-                    <button
-                      key={tab}
-                      type="button"
-                      onClick={() => setActiveTab(tab)}
-                      className={`flex-1 rounded-md px-3 py-2 text-center text-xs font-semibold transition-colors sm:text-sm ${
-                        activeTab === tab
-                          ? "bg-white text-slate-900 shadow-sm"
-                          : "text-slate-600 hover:text-slate-900"
-                      }`}
-                    >
-                      {tab} result
-                    </button>
-                  ))}
-                </div>
-
-                <div
-                  className="rounded-xl border border-slate-100 p-5"
-                  style={{ backgroundColor: current.bg }}
-                >
-                  <p
-                    className="text-[10px] font-semibold uppercase tracking-wider opacity-70"
-                    style={{ color: current.text }}
-                  >
-                    {current.predicted}
-                  </p>
-                  <div className="mt-2 flex items-start gap-3">
-                    <span
-                      className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full"
-                      style={{ backgroundColor: current.dot }}
-                      aria-hidden
+            ) : analysisPayload ? (
+              (() => {
+                const slot = getModelSlot(analysisPayload, selectedModel);
+                const modelTitle = MODEL_RESULT_LABELS[selectedModel];
+                if (screeningType === "binary") {
+                  if (slot.binary) {
+                    return (
+                      <BinaryScreeningResult
+                        result={slot.binary.result}
+                        confidence={slot.binary.confidence}
+                        model={modelTitle}
+                      />
+                    );
+                  }
+                  return (
+                    <p className="text-sm leading-relaxed text-slate-600">
+                      Results unavailable for this model. Please try Averaged or
+                      another model.
+                    </p>
+                  );
+                }
+                if (slot.multiclass) {
+                  return (
+                    <MultiClassScreeningResult
+                      result={slot.multiclass.result}
+                      confidence={slot.multiclass.confidence}
+                      model={modelTitle}
                     />
-                    <h3
-                      className="text-xl font-bold leading-snug sm:text-2xl"
-                      style={{ color: current.text }}
-                    >
-                      {current.label}
-                    </h3>
-                  </div>
-                </div>
-
-                <div>
-                  <p className="mb-3 text-sm font-semibold text-slate-800">
-                    AI Confidence Metrics
+                  );
+                }
+                return (
+                  <p className="text-sm leading-relaxed text-slate-600">
+                    Results unavailable for this model. Please try Averaged or
+                    another model.
                   </p>
-                  <div className="space-y-4">
-                    {(
-                      [
-                        {
-                          key: "AD" as const,
-                          bar: "#E24B4A",
-                          text: "#791F1F",
-                        },
-                        {
-                          key: "MCI" as const,
-                          bar: "#EF9F27",
-                          text: "#633806",
-                        },
-                        {
-                          key: "CN" as const,
-                          bar: "#639922",
-                          text: "#27500A",
-                        },
-                      ] as const
-                    ).map(({ key, bar, text }) => {
-                      const pct = barProgress[key];
-                      return (
-                        <div key={key}>
-                          <div className="mb-1 flex items-center justify-between text-xs font-medium text-slate-600">
-                            <span>{key}</span>
-                            <span style={{ color: text }}>{pct}%</span>
-                          </div>
-                          <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-200">
-                            <div
-                              className="h-full rounded-full transition-[width] duration-700 ease-out"
-                              style={{
-                                width: `${pct}%`,
-                                backgroundColor: bar,
-                              }}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div
-                  className="border-l-4 py-3 pl-4 pr-2 text-sm leading-relaxed text-slate-700"
-                  style={{ borderColor: current.bar }}
-                >
-                  {current.alert}
-                </div>
-              </div>
-            )}
+                );
+              })()
+            ) : null}
           </section>
         </div>
       </main>
