@@ -50,10 +50,10 @@ const MODEL_OPTIONS: { value: ModelSelectionKey; label: string }[] = [
 ];
 
 const MODEL_SUBLABELS: Record<ModelSelectionKey, string> = {
-  averaged: "Ensemble of all 3 models",
-  "3d_pca_svm": "SVM with 3D PCA features",
-  "2d_cnn_model": "2D Convolutional Neural Network",
-  custom_cnn: "Custom CNN architecture",
+  averaged: "Combined result from all models",
+  "3d_pca_svm": "Statistical model",
+  "2d_cnn_model": "Image recognition model",
+  custom_cnn: "Advanced deep learning model",
 };
 
 const MODEL_RESULT_LABELS: Record<ModelSelectionKey, string> = {
@@ -325,7 +325,7 @@ export default function Home() {
                   Drag &amp; Drop MRI scan or Click to Browse
                 </p>
                 <p className="mt-1 text-xs text-slate-500">
-                  Accepts .nii, .nii.gz, and .npy (T1-weighted)
+                  Accepts Brain MRI scan (.nii, .nii.gz, and .npy T1-weighted)
                 </p>
               </button>
 
@@ -397,7 +397,7 @@ export default function Home() {
                         : undefined
                     }
                   >
-                    Binary Classification (Normal vs. Alzheimer&apos;s)
+                    Simple Screening (Normal vs. Alzheimer&apos;s)
                   </button>
                   <button
                     type="button"
@@ -413,7 +413,7 @@ export default function Home() {
                         : undefined
                     }
                   >
-                    Multi-Class (includes MCI)
+                    Detailed Screening (includes early-stage detection)
                   </button>
                 </div>
               </div>
@@ -450,7 +450,7 @@ export default function Home() {
                         d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                       />
                     </svg>
-                    <span>Executing Preprocessing Pipeline &amp; Analyzing...</span>
+                    <span>Preparing Scanning... &amp; Analyzing...</span>
                   </>
                 ) : (
                   <>

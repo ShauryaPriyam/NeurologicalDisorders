@@ -65,10 +65,10 @@ export function MultiClassScreeningResult({
 
   const alertText =
     result === "ad"
-      ? "High-probability neurodegeneration detected. Referral for comprehensive clinical and cognitive evaluation is strongly recommended."
+      ? "High-probability Brain cell decline detected. Referral for comprehensive clinical and cognitive evaluation is strongly recommended."
       : result === "mci"
-        ? "Mild cognitive decline indicated. Longitudinal monitoring and neuropsychological assessment are advised."
-        : "No significant neurodegeneration detected. Routine follow-up as clinically appropriate.";
+        ? "Mild cognitive decline indicated. Regular check-ups over time and Memory and thinking tests are advised."
+        : "No significant Brain cell decline detected. Routine follow-up as clinically appropriate.";
 
   return (
     <div className="space-y-5">
@@ -103,7 +103,7 @@ export function MultiClassScreeningResult({
 
       <div>
         <p className="mb-3 text-sm font-semibold text-slate-800">
-          AI Confidence Metrics
+        How confident is the AI?
         </p>
         <div className="space-y-4">
           {(

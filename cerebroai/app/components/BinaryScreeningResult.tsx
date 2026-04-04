@@ -71,7 +71,7 @@ export function BinaryScreeningResult({
 
       <div>
         <p className="mb-3 text-sm font-semibold text-slate-800">
-          AI Confidence Metrics
+        How confident is the AI?
         </p>
         <div className="space-y-4">
           <div>
@@ -116,8 +116,8 @@ export function BinaryScreeningResult({
         style={{ borderColor: isAd ? AD_BAR : CN_BAR }}
       >
         {isAd
-          ? "High-probability neurodegeneration detected. Referral for comprehensive clinical and cognitive evaluation is strongly recommended."
-          : "No significant neurodegeneration detected. Routine follow-up as clinically appropriate."}
+          ? "High-probability Brain cell decline detected. Referral for comprehensive clinical and cognitive evaluation is strongly recommended."
+          : "No significant Brain cell decline detected. Routine follow-up as clinically appropriate."}
       </div>
     </div>
   );
